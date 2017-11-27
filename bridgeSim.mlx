@@ -1,0 +1,547 @@
+close all
+clear
+clc
+
+%setting up constants
+positions = 200;
+loads = [-400/6 -400/6 -400/6 -400/6 -400/6 -400/6]';
+load_locations = NaN(positions,6);
+load_offsets = [0 176 340 516 680 856];
+dx = linspace(0,394,positions);
+
+%Geometrical Properties of the bridge
+I_at_x = NaN(1,1250);
+ybar_at_x = NaN(1,1250);
+h_at_x = NaN(1,1250);
+[I_at_x, h_at_x, ybar_at_x, q_centroid_at_x, q_flange_at_x, miny, maxy]= getStuff();
+I_at_x = I_at_x';
+h_at_x = h_at_x';
+ybar_at_x = ybar_at_x';
+q_flange_at_x = q_flange_at_x';
+q_centroid_at_x = q_centroid_at_x';
+
+box_start = 850; % value in getStuff() - 50
+box_thick_start = 850;
+box_thick_end = 1090;
+thickness_of_top = 2.54;
+thickness_of_web = 1.27;
+thickness_of_bottom = [1.27*ones(1,box_thick_start) 1.27*3*ones(1, (box_thick_end - box_thick_start)) 1.27*ones(1, (1250 - box_thick_end)) ];
+edge_width = 15;
+middle_width = 70;
+distance_between_diags = 250;
+glue_contact_surface = 10; % on each side
+
+%Material properties of the bridge
+tensile_strength = 30;
+compressive_strength = 6;
+shear_matboard = 4;
+shear_glue = 2;
+E = 4000;
+poison = 0.1;
+
+% Area Calculations
+
+Amax = 810 * 1010;
+
+Aflange = 2 * (1350 * (edge_width * 2 + middle_width));
+
+Aweb = 2 *(miny * 1350 + (maxy - miny) * 1060 / 2);
+
+Abot = (1350 - box_start) * middle_width + 2 * (box_thick_end - box_thick_start) * middle_width;
+
+Aflap = 10 * 1350;
+
+Adiaphagms = 2 * middle_width * (h_at_x(1) + h_at_x(50) + h_at_x(250) + h_at_x(540) + h_at_x(550) + h_at_x(1050) + h_at_x(1070));
+
+Atot = Aflange + Aweb + Abot + Adiaphagms + Aflap;
+
+Aremaining = Amax - Atot
+
+percentage = Aremaining/Amax
+
+%intitalizing load position matrix
+for i=1:positions
+    load_locations(i,:) = load_offsets + dx(i);
+end
+
+
+%solving for reaction forces
+moment_a = load_locations * loads;
+support_forces = NaN(positions,2);
+support_forces(:,2) = moment_a ./ -1060; % sum of moments about a = 0
+support_forces(:,1) = 400 - support_forces(:,2); % sum of forces in y = 0
+clear moment_a
+
+forces = NaN(positions,8);
+forces(:,1) = support_forces(:,1);
+force_locations = NaN(positions,8);
+force_locations(:,1) = 0;
+for i=1:positions
+    added_support = false;
+    skip = false;
+    for j=2:7
+        if load_locations(i,j-1) >= 1060 && added_support == false
+            force_locations(i,j) = 1060;
+            forces(i,j) = support_forces(i,2);
+            force_locations(i,j+1) = load_locations(i,j-1);
+            forces(i,j+1) = loads(j-1,1);
+            added_support = true;
+            
+        elseif added_support == true
+            force_locations(i,j+1) = load_locations(i,j-1);
+            forces(i,j+1) = loads(j-1,1);
+        
+        else
+            force_locations(i,j) = load_locations(i,j-1);
+            forces(i,j) = loads(j-1,1);
+        end
+    end
+    if isnan(forces(i,8))
+        forces(i,8) = support_forces(i,2);
+        force_locations(i,8) = 1060;
+    end
+end
+
+shear = NaN(positions,7);
+shear(:,1) = forces(:,1);
+for i=2:7
+    shear(:,i) = shear(:,i-1)+forces(:,i);
+end
+
+graphing_forces_dummy = NaN(positions,14);
+graphing_pos_dummy= NaN(positions,14);
+
+graphing_forces_dummy(:,1) = shear(:,1);
+graphing_forces_dummy(:,14) = shear(:,7);
+for i=1:7
+    graphing_forces_dummy(:,i*2-1) = shear(:,i);
+    graphing_forces_dummy(:,i*2) = shear(:,i);
+end
+graphing_pos_dummy(:,1) = force_locations(:,1);
+graphing_pos_dummy(:,14) = force_locations(:,8);
+
+for i=1:6
+    
+    graphing_pos_dummy(:,i*2) = force_locations(:,i+1);
+    graphing_pos_dummy(:,i*2+1) = force_locations(:,i+1);
+end
+graphing_forces_dummy = [zeros(positions,1), graphing_forces_dummy, zeros(positions,1)];
+graphing_pos_dummy = [zeros(positions,1), graphing_pos_dummy, graphing_pos_dummy(:,14)];
+figure
+hold on
+for i=1:positions
+    plot(graphing_pos_dummy(i,:),graphing_forces_dummy(i,:))
+end
+plot(linspace(0,1250,100),zeros(100))
+ylabel("Shear Force (N)")
+xlabel("x (mm)")
+title("Overlay of Shear Force Diagrams During Train Movement")
+clear graphing_forces_dummy
+clear graphing_pos_dummy
+
+moments = NaN(positions,8);
+moments(:,1) = 0;
+for i=2:8
+    moments(:,i) = moments(:,i-1) + shear(:,i-1).*(force_locations(:,i)-force_locations(:,i-1));
+end
+
+figure
+hold on
+for i=1:positions
+    plot(force_locations(i,:),moments(i,:))
+end
+plot(linspace(0,1250,100),zeros(100))
+ylabel("Bending Moment (N.mm)")
+xlabel("x (mm)")
+title("Overlay of Moment Diagrams During Train Movement")
+set(gca, 'Ydir', 'reverse')
+
+x = linspace(0,1250,1250);
+shear_at_x = zeros(1,1250);
+for i=1:length(x)
+    for j=1:positions
+        for k=1:8
+            if x(i) < force_locations(j,k)
+                if abs(shear_at_x(i)) < abs(shear(j,k-1))
+                    shear_at_x(i) = shear(j,k-1);
+                end
+                break
+            end
+        end 
+    end
+end
+figure
+hold on
+plot(x,shear_at_x)
+plot(x,zeros(1,1250))
+ylabel("Shear Force (N)")
+xlabel("x (mm)")
+title("Maximum Shear Across the Bridge During Train Movement")
+
+moment_at_x_positive = zeros(1,1250);
+moment_at_x_negative = zeros(1,1250);
+
+for i=1:length(x)
+    for j=1:positions
+        for k=1:8
+            if x(i) < force_locations(j,k)
+                temp = ((moments(j,k) - moments(j,k-1)) .* abs((x(i) - force_locations(j,k-1))./(force_locations(j,k) - force_locations(j,k-1))))+moments(j,k-1);
+                if moment_at_x_positive(i) < temp
+                    moment_at_x_positive(i) = temp;
+                end
+                break
+            end
+        end 
+    end
+end
+for i=1:length(x)
+    for j=1:positions
+        for k=1:8
+            if x(i) < force_locations(j,k)
+                temp = moments(j,k-1) +((moments(j,k) - moments(j,k-1)) .* abs((x(i) - force_locations(j,k-1))./(force_locations(j,k) - force_locations(j,k-1))));
+                if moment_at_x_negative(i) > temp
+                    moment_at_x_negative(i) = temp;
+                end
+                break
+            end
+        end 
+    end
+end
+figure
+hold on
+plot(x,moment_at_x_positive)
+plot(x,moment_at_x_negative)
+plot(x,zeros(1,1250))
+set(gca,'Ydir', 'reverse')
+ylabel("Bending Moment (N.mm)")
+xlabel("x (mm)")
+title("Maximum Negative and Positive Moments Across the Bridge During Train Movement")
+
+%flexural failure modes
+figure %flexural compressive failure of the top
+hold on
+plot(x, ones(1,1250).*compressive_strength,"--r")
+% buckling of top middle flange
+
+
+crit_stress = 4 .* pi^2 .* E ./(12 .*(1- poison ^2)) .* (thickness_of_top./middle_width)^2;
+plot(x, ones(1,1250).*crit_stress, '--')
+% buckling of top side flanges
+
+
+crit_stress = 0.425 .* pi^2 .* E ./(12 .*(1- poison ^2)) .* (thickness_of_top./edge_width)^2;
+plot(x, ones(1,1250).*crit_stress, '--')
+plot(x, moment_at_x_positive .* (h_at_x - ybar_at_x) ./I_at_x)
+
+b = h_at_x./2;
+crit_stress = 6 .* pi^2 .* E ./(12 .*(1- poison ^2)) .* (thickness_of_web./b).^2;
+plot(x,crit_stress,'--')
+legend('show', 'compressive strength', 'buckling stress of top middle flange', 'buckling stress of top side flanges', 'maximum flexural compression felt on the top', 'buckling stress of the web')
+ylabel("Compression (MPa)")
+xlabel("x (mm)")
+title("Capacity and Maximum Demand across the Bridge During Train Movement")
+figure %compressive failure of the bottom
+hold on
+plot(x, ones(1,1250).*compressive_strength,"--r")
+plot(x,abs(moment_at_x_negative) .* ybar_at_x ./I_at_x)
+b = h_at_x./2;
+
+crit_stress = 6 .* pi^2 .* E ./(12 .*(1- poison ^2)) .* (thickness_of_web./b).^2;
+plot(x,crit_stress,'--')
+crit_stress = 4 .* pi^2 .* E ./(12 .*(1- poison ^2)) .* (thickness_of_bottom(box_start:1250)./middle_width).^2
+plot(x(1,box_start:1250),ones(1,1250-box_start+1) .* crit_stress, '--')
+legend('show', 'compressive strength', 'maximum compression felt on the bottom','buckling stress of the web','buckling stress of bottom flange')
+ylabel("Compression (MPa)")
+xlabel("x (mm)")
+title("Capacity and Maximum Demand across the Bridge During Train Movement")
+figure %flexural tensile failure
+hold on
+plot(x, ones(1,1250).*tensile_strength,"--r")
+plot(x, abs(moment_at_x_negative) .* (h_at_x - ybar_at_x) ./I_at_x)
+plot(x,moment_at_x_positive .* ybar_at_x ./I_at_x)
+legend('show', 'tensile strength', 'maximum tension felt on the top', 'maximum tension felt on the bottom')
+ylabel("Tension (MPa)")
+xlabel("x (mm)")
+title("Capacity and Maximum Demand across the Bridge During Train Movement")
+
+figure %shear failure modes of the matboard
+hold on
+b = 2 * thickness_of_web;
+plot(x, ones(1,1250).*shear_matboard,'--b')
+plot(x,abs(shear_at_x) .* q_centroid_at_x ./ (I_at_x .* b))
+b = h_at_x;
+t = thickness_of_web;
+a = distance_between_diags;
+crit_stress = 5 .* pi^2 .* E ./(12 .*(1- poison ^2)) .* ( (t./b).^2 + (t./a).^2 );
+plot(x, crit_stress,'--')
+legend('show', 'shear strength of matboard', 'maximum shear stress felt','shear buckling stress of web')
+ylabel("Shear (MPa)")
+xlabel("x (mm)")
+title("Capacity and Maximum Demand across the Bridge During Train Movement")
+
+figure %shear failure of the glue
+hold on
+b = 2 * glue_contact_surface;
+plot(x, ones(1,1250).*shear_glue,'--b')
+plot(x,abs(shear_at_x) .* q_flange_at_x ./ (I_at_x .* b))
+legend('show', 'glue shear strength', 'shear stress on glue')
+ylabel("Shear (MPa)")
+xlabel("x (mm)")
+title("Capacity and Maximum Demand across the Bridge During Train Movement")
+
+%matboard flexural failure
+crit_pos_flex_tens = NaN(1,1250);
+crit_pos_flex_comp = NaN(1,1250);
+crit_neg_flex_tens = NaN(1,1250);
+crit_neg_flex_comp = NaN(1,1250);
+
+for i=1:1250
+    if i < 788 %moment is positive for 0<x<788
+        crit_pos_flex_tens(1,i) = tensile_strength .* I_at_x(1,i) ./ ybar_at_x(1,i);
+        crit_pos_flex_comp(1,i) = compressive_strength .* I_at_x(1,i) ./(h_at_x(1,i) - ybar_at_x(1,i));
+    else %moment is negative for 788<x<1250
+        crit_neg_flex_tens(1,i) = tensile_strength .* I_at_x(1,i) ./(h_at_x(1,i) - ybar_at_x(1,i));
+        crit_neg_flex_comp(1,i) = compressive_strength .* I_at_x(1,i) ./ ybar_at_x(1,i);
+    end
+end
+
+crit_pos_flex_comp = failMomentTofailP(crit_pos_flex_comp);
+[p,loc]=min(crit_pos_flex_comp)
+crit_pos_flex_tens = failMomentTofailP(crit_pos_flex_tens);
+[p,loc] = min(crit_pos_flex_tens)
+crit_neg_flex_comp = failMomentTofailP(crit_neg_flex_comp);
+[p, loc] = min(crit_neg_flex_comp)
+crit_neg_flex_tens = failMomentTofailP(crit_neg_flex_tens);
+[p, loc] = min(crit_neg_flex_tens)
+
+%matboard shear failure
+b = 2 * thickness_of_web;
+
+crit_shear_matboard = NaN(1,1250);
+for i = 1:1250
+    crit_shear_matboard(1,i) = shear_matboard .* I_at_x(1,i) .* b ./ q_centroid_at_x(1,i);
+    if i < 550
+        crit_shear_matboard(1,i) = crit_shear_matboard(1,i) * 10/3;
+    elseif i < 1060
+        crit_shear_matboard(1,i) = crit_shear_matboard(1,i) * 10/7;
+    end
+end
+[p, loc] = min(crit_shear_matboard)
+
+%glue shear failure
+b = 2 * glue_contact_surface;
+crit_shear_glue = NaN(1,1250);
+for i = 1:1250
+    crit_shear_glue(1,i) = shear_matboard .* I_at_x(1,i) .* b ./ q_flange_at_x(1,i);
+    if i < 550
+        crit_shear_glue(1,i) = crit_shear_glue(1,i) * 10 /3;
+    elseif i < 1060
+        crit_shear_glue(1,i) = crit_shear_glue(1,i) * 10/ 7;
+    end
+end
+[p, loc] = min(crit_shear_glue)
+
+%Buckling of top flange edges
+
+crit_stress = 0.425 .* pi^2 .* E ./(12 .*(1- poison ^2)) .* (thickness_of_top./edge_width)^2
+crit_edge_buckling = NaN(1,1250);
+for i = 1:788
+    crit_edge_buckling(1,i) = crit_stress * I_at_x(1,i) ./ (h_at_x(1,i)-ybar_at_x(1,i));
+end
+crit_edge_buckling = failMomentTofailP(crit_edge_buckling);
+[p,loc] =min(crit_edge_buckling)
+
+%buckling of bottom flange
+crit_stress = 4 .* pi^2 .* E ./(12 .*(1- poison ^2)) .* (thickness_of_bottom(box_start:1250)./middle_width).^2;
+crit_edge_buckling = NaN(1,1250);
+for i = box_start:1250 
+    crit_edge_buckling(1,i) = crit_stress(1, (i - box_start + 1)) * I_at_x(1,i) ./ (ybar_at_x(1,i));
+end
+crit_edge_buckling = failMomentTofailP(crit_edge_buckling);
+[p,loc] =min(crit_edge_buckling)
+
+%buckling of top flange: middle 
+
+crit_stress = 4 .* pi^2 .* E ./(12 .*(1- poison ^2)) .* (thickness_of_top./middle_width)^2
+crit_middle_buckling = NaN(1,1250);
+crit_middle_buckling(:,1:788) = crit_stress .* I_at_x(:,1:788) ./ (h_at_x(:,1:788)-ybar_at_x(:,1:788));
+crit_middle_buckling = failMomentTofailP(crit_middle_buckling);
+[p,loc]=min(crit_middle_buckling)
+
+%buckling of web
+b = h_at_x./2;
+crit_stress = 6 .* pi^2 .* E ./(12 .*(1- poison ^2)) .* (thickness_of_web./b).^2;
+
+crit_web_buckling = NaN(1,1250);
+
+for i = 1:788
+    crit_web_buckling(1,i) = crit_stress(1,i) .* I_at_x(1,i) ./ ( h_at_x(1,i) - ybar_at_x(1,i) );
+end
+
+for i = 789:1250
+    crit_web_buckling(1,i) = crit_stress(1,i) .* I_at_x(1,i) ./ ybar_at_x(1,i);
+end
+crit_web_buckling = failMomentTofailP(crit_web_buckling);
+
+[p,loc] = min(crit_web_buckling(1,1:788))
+[p,loc] = min(crit_web_buckling(1,789:1250))
+loc+789
+
+%buckling of web shear
+b = h_at_x;
+t = thickness_of_web;
+a = distance_between_diags;
+crit_stress = 5 .* pi^2 .* E ./(12 .*(1- poison ^2)) .* ( (thickness_of_web./b).^2 + (thickness_of_web./distance_between_diags).^2 );
+
+for i = 1:1250
+    crit_web_shear_buckling(i) = crit_stress(i) .* I_at_x(i) ./ (h_at_x(i) - ybar_at_x(i));
+    if i <550
+        crit_web_shear_buckling(i) = crit_web_shear_buckling(i) *10/3;
+    elseif i < 1060
+        crit_web_shear_buckling(i) = crit_web_shear_buckling(i) * 10/7;
+    end
+end
+[p, loc] = min(crit_web_shear_buckling)
+
+shear_deflection = NaN(1,1250);
+shear_deflection(:,1:550) = 0.3 * 200;
+shear_deflection(:,551:1059) = -0.7 * 200;
+shear_deflection(:,1060:1250) = 200;
+figure
+hold on
+plot(x,shear_deflection)
+plot(x,zeros(1,1250))
+ylabel("Shear Force (N)")
+xlabel("x (mm)")
+title("Shear Force Diagram")
+moment_deflection = NaN(1,1250);
+moment_deflection(1,1) = 0;
+for i = 2:1250
+    moment_deflection(1,i) = moment_deflection(1,i-1) + shear_deflection(1,i);
+end
+figure
+hold on
+plot(x,zeros(1,1250))
+plot(x,moment_deflection)
+set(gca,'Ydir', 'reverse')
+ylabel("Bending Moment (N.mm)")
+xlabel("x (mm)")
+title("Bending Moment Diagram")
+curvature_deflection = moment_deflection ./(E.*I_at_x);
+figure
+hold on
+plot(x,curvature_deflection)
+plot(x,zeros(1,1250))
+set(gca,'Ydir', 'reverse')
+title("Curvature Diagram")
+ylabel("Curvature (rad/mm)")
+xlabel("x (mm)")
+(1060 - x(1:1060)) .*curvature_deflection(1:1060)
+defBA = trapz((1060 - x(1:1060)) .*curvature_deflection(1:1060))
+defMidA = trapz((530-x(1:530)) .*curvature_deflection(1:530))
+midSpanDef = (530/1060 * defBA) - defMidA 
+
+function x = failMomentTofailP(m)
+    x = NaN(1,1250);
+    for i = 1:1250
+        if isnan(m(i))
+            %do nothing
+        else
+            if i>0 && i<550
+                x(1,i) = m(1,i)/(0.302 * i);
+            elseif i>= 550 && i < 788
+                x(1,i) = m(1,i)/(166-0.7*(i-550));
+            elseif i == 0 | i == 788 | i == 1250 %due to positioning of loads and supports, moment is zero at these points. ie. no P can cause a moment here
+                x(1,i) = NaN;
+            elseif i<= 1060 && i > 788
+                x(1,i) = m(1,i)/(0.7*(i-788));
+            else
+                x(1,i) = m(1,i)/(190-(i-1060));
+            end
+        end
+    end
+end
+
+
+
+function [I, h, ybar, Qweb, Qflange, miny, maxy] = getStuff()
+    t = 1.27;
+    x = 0:1350;
+    h = zeros(1, 1351);
+    miny = 100;
+    maxy = 110;
+    slope_right = (maxy - miny)/580; 
+    slope_left = (maxy - miny)/480;
+    width = 100;
+    flange_edge = 15;
+    box_start = 900;
+    box_thick_start = 900;
+    box_thick_end = 1240;
+    
+    for r = 0:50
+        h(r + 1) = miny;
+    end
+    
+    for r = 51:580
+        h(r + 1) = h(r) + slope_right;
+    end
+    
+    for r=581:1110
+        h(r + 1) = h(r) - slope_left;
+    end
+    
+    for r=1111:1350
+        h(r + 1) = miny;
+    end
+    
+    A1 = t * h;
+    A2 = 2 * t * width;
+    A3 = t * (width - 2 * flange_edge);
+    A4 = 3 * t * (width - 2 * flange_edge);
+    
+    Y1 = h / 2;
+    Y2 = h + t;
+    Y3 = t/2;
+    Y4 = 3*t / 2;
+    
+    ybar = (2 * A1 .* Y1 + A2 * Y2) ./ (2 * A1 + A2);
+    
+    ybar(box_start:1351) = (2 * A1(box_start:1351) .* Y1(box_start:1351) + A2 * Y2(box_start:1351) + A3 * Y3) ./ (2 * A1(box_start:1351) + A2 + A3);
+    
+    YAsum = (2 * A1(box_thick_start:box_thick_end) .* Y1(box_thick_start:box_thick_end) + A2 * Y2(box_thick_start:box_thick_end) + A4 * Y4);
+    areas = (2 * A1(box_thick_start:box_thick_end) + A2 + A3);
+    
+    ybar(box_thick_start:box_thick_end) = YAsum./ areas;
+    
+    
+    I1 = (t * (h.^3)) / 12;
+    
+    I2 = width * (2*t)^3 / 12;
+    
+    I3 = (width - 2 * flange_edge) * t^3 / 12;
+    
+    I4 = (width - 2 * flange_edge) * (3*t)^3 / 12;
+    
+    I = 2 * I1 + I2 + 2 * A1 .* (ybar - Y1).^2 + A2 * (Y2 - ybar).^2;
+    
+    I(box_start:box_thick_start) = I(box_start:box_thick_start) + I3 + A3 * (ybar(box_start:box_thick_start) - Y3).^2;
+    I(box_thick_start:box_thick_end) = I(box_thick_start:box_thick_end) + I4 + A4 * (ybar(box_thick_start:box_thick_end) - Y4).^2;
+    I(box_thick_end:1350) = I(box_thick_end:1350) + I3 + A3 * (ybar(box_thick_end:1350) - Y3).^2;
+    
+    Qflange = A2 * (h - ybar + t);
+    Qweb = 2 * ybar * t .* ybar/2;
+    Qweb(box_start:box_thick_start) = Qweb(box_start:box_thick_start) + A3 * (ybar(box_start:box_thick_start) - Y3);
+    Qweb(box_thick_start:box_thick_end) = Qweb(box_thick_start:box_thick_end) + A4 * (ybar((box_thick_start:box_thick_end)) - Y4);
+    Qweb(box_thick_end:1350) = Qweb(box_thick_end:1350) + A3 * (ybar(box_thick_end:1350) - Y3);
+    
+    h = h(:,51:1300);
+    h = h';
+    Qflange = Qflange(:,51:1300);
+    Qflange = Qflange';
+    Qweb = Qweb(:,51:1300);
+    Qweb = Qweb';
+    I = I(:,51:1300);
+    I = I';
+    ybar = ybar(:,51:1300);
+    ybar = ybar';
+end
